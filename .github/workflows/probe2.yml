@@ -1,0 +1,60 @@
+---
+name: probe2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 验证版本解析逻辑
+        run: |
+          set -euo pipefail
+          DOC=https://docs.qq.com/doc/DVXNoRlpKaWhEY015
+          curl -fsSL --retry 3 --max-time 60 "$DOC" -o doc.html
+          echo "页面大小: $(stat -c%s doc.html)"
+
+          echo "===== 全部 linuxqq 文件引用 ====="
+          grep -oE 'linuxqq_[0-9][A-Za-z0-9._-]*\.(deb|rpm|AppImage)' doc.html | sort -u
+
+          echo "===== 完整 URL 引用 ====="
+          grep -oE 'https://qqdl\.gtimg\.cn/[A-Za-z0-9._/-]*linuxqq_[A-Za-z0-9._-]+' doc.html | sort -u
+
+          echo "===== amd64.deb 提取 ====="
+          grep -oE 'https://qqdl\.gtimg\.cn/[^"<>\\ ]+linuxqq_[^"<>\\ ]+_amd64\.deb' doc.html | sort -u | tee amd.txt
+
+          echo "===== 版本号解析 ====="
+          AMD_URL=$(sed -E 's#.*/linuxqq_([0-9][^_]*)_amd64\.deb#\1 &#' amd.txt | sort -V | tail -n 1 | cut -d' ' -f2)
+          VERSION=$(basename "$AMD_URL" | sed -E 's/^linuxqq_(.+)_amd64\.deb$/\1/')
+          BASE=$(dirname "$AMD_URL")
+          echo "AMD_URL=$AMD_URL"
+          echo "VERSION=$VERSION"
+          echo "BASE=$BASE"
+
+          echo "===== 各架构探测 ====="
+          for a in amd64.deb arm64.deb x86_64.rpm aarch64.rpm x86_64.AppImage arm64.AppImage loongarch64.deb mips64el.deb; do
+            u="$BASE/linuxqq_${VERSION}_${a}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 30 "$u")
+            echo "PROBE $code $a"
+          done
+
+      - name: 验证结构校验逻辑
+        run: |
+          set -euo pipefail
+          VERSION=3.2.35-54395
+          BASE=https://qqdl.gtimg.cn/qqfile/QQNT/9.9.37/beta/816b3c79
+          mkdir -p t
+          curl -fsSL --retry 3 --max-time 120 -o t/a.deb "$BASE/linuxqq_${VERSION}_amd64.deb"
+          curl -fsSL --retry 3 --max-time 120 -o t/a.rpm "$BASE/linuxqq_${VERSION}_x86_64.rpm"
+          curl -fsSL --retry 3 --max-time 180 -o t/a.AppImage "$BASE/linuxqq_${VERSION}_x86_64.AppImage"
+
+          echo "deb 前8字节: [$(head -c 8 t/a.deb | tr -d '\0')]"
+          echo "rpm 前4字节: [$(head -c 4 t/a.rpm | od -An -tx1 | tr -d ' \n')]"
+          echo "AppImage 含 ELF: $(head -c 64 t/a.AppImage | grep -qa 'ELF' && echo yes || echo no)"
+
+          magic=$(head -c 8 t/a.deb | tr -d '\0')
+          [ "$magic" = "!<arch>" ] && echo "deb OK" || { echo "deb FAIL"; exit 1; }
+          rmagic=$(head -c 4 t/a.rpm | od -An -tx1 | tr -d ' \n')
+          [ "$rmagic" = "edabeedb" ] && echo "rpm OK" || { echo "rpm FAIL: $rmagic"; exit 1; }
+          head -c 64 t/a.AppImage | grep -qa 'ELF' && echo "AppImage OK" || { echo "AppImage FAIL"; exit 1; }

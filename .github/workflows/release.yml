@@ -21,41 +21,35 @@ jobs:
       trigger: ${{ steps.check.outputs.trigger }}
       version: ${{ steps.check.outputs.version }}
       base: ${{ steps.check.outputs.base }}
-      sha256_amd64: ${{ steps.check.outputs.sha256_amd64 }}
-      sha256_arm64: ${{ steps.check.outputs.sha256_arm64 }}
     steps:
-      - name: 从 flathub 清单读取最新版本与下载目录
+      - name: 从腾讯官方文档页解析最新版本
         id: check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # flathub 由 x-checker 机器人自动跟进腾讯官方发版，清单里带有
-          # 真实的 linuxqq deb 下载地址与 sha256，可作为版本与完整性基准。
-          curl -fsSL --retry 3 \
-            https://raw.githubusercontent.com/flathub/com.qq.QQ/master/com.qq.QQ.yaml -o flat.yaml
+          # 腾讯官方 Linux QQ 下载文档页，随版本更新替换内容。
+          # 只依赖腾讯自有域名，不引入任何第三方仓库作为版本来源。
+          DOC=https://docs.qq.com/doc/DVXNoRlpKaWhEY015
+          curl -fsSL --retry 3 --retry-delay 5 --max-time 60 "$DOC" -o doc.html
 
-          AMD_URL=$(grep -oP 'https://qqdl\.gtimg\.cn/[^ ]*linuxqq_[^ ]*_amd64\.deb' flat.yaml | head -n 1)
-          ARM_URL=$(grep -oP 'https://qqdl\.gtimg\.cn/[^ ]*linuxqq_[^ ]*_arm64\.deb' flat.yaml | head -n 1)
-          if [ -z "$AMD_URL" ]; then
-            echo "::error::未能从 flathub 清单解析出 amd64 下载地址"
+          grep -oE 'https://qqdl\.gtimg\.cn/[^"<>\\ ]+linuxqq_[^"<>\\ ]+_amd64\.deb' doc.html \
+            | sort -u > amd.txt
+          if [ ! -s amd.txt ]; then
+            echo "::error::未能从腾讯官方文档页解析出 amd64 下载地址"
             exit 1
           fi
+          echo "解析到的 amd64 地址:"
+          cat amd.txt
 
-          VERSION=$(basename "$AMD_URL" | sed -E 's/^linuxqq_([^_]+)_amd64\.deb$/\1/')
+          # 同一文档页可能残留多个历史版本，取版本号最大的一条。
+          AMD_URL=$(sed -E 's#.*/linuxqq_([0-9][^_]*)_amd64\.deb#\1 &#' amd.txt \
+            | sort -V | tail -n 1 | cut -d' ' -f2)
+          VERSION=$(basename "$AMD_URL" | sed -E 's/^linuxqq_(.+)_amd64\.deb$/\1/')
           BASE=$(dirname "$AMD_URL")
-
-          SHA_AMD=$(awk -v u="$AMD_URL" '
-            $0 ~ "url: "u { found=1; next }
-            found && /sha256:/ { print $2; exit }' flat.yaml)
-          SHA_ARM=$(awk -v u="$ARM_URL" '
-            $0 ~ "url: "u { found=1; next }
-            found && /sha256:/ { print $2; exit }' flat.yaml)
 
           echo "版本: $VERSION"
           echo "目录: $BASE"
-          echo "amd64 sha256: $SHA_AMD"
-          echo "arm64 sha256: $SHA_ARM"
 
           if gh api "/repos/${{ github.repository }}/releases/tags/$VERSION" > /dev/null 2>&1; then
             echo "trigger=false" >> "$GITHUB_OUTPUT"
@@ -66,8 +60,6 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
-          echo "sha256_amd64=$SHA_AMD" >> "$GITHUB_OUTPUT"
-          echo "sha256_arm64=$SHA_ARM" >> "$GITHUB_OUTPUT"
 
   build:
     needs: trigger
@@ -109,25 +101,51 @@ jobs:
 
           ls -lh out
 
-      - name: 校验官方 sha256
+      - name: 校验安装包完整性
         env:
           VERSION: ${{ needs.trigger.outputs.version }}
-          SHA_AMD: ${{ needs.trigger.outputs.sha256_amd64 }}
-          SHA_ARM: ${{ needs.trigger.outputs.sha256_arm64 }}
         run: |
           set -euo pipefail
-          check() {
-            file="$1"; want="$2"
-            [ -z "$want" ] && { echo "跳过 $file 校验（清单无摘要）"; return 0; }
-            got=$(sha256sum "$file" | cut -d' ' -f1)
-            if [ "$got" != "$want" ]; then
-              echo "::error::$file 摘要不符：期望 $want，实际 $got"
+          # 腾讯官方不发布校验摘要，此处做结构完整性校验：
+          # deb 必须含 ar 魔数，rpm 必须含 rpm 魔数，AppImage 必须可执行。
+          check_deb() {
+            magic=$(head -c 8 "$1" | tr -d '\0')
+            if [ "$magic" != "!<arch>" ]; then
+              echo "::error::$1 不是有效的 deb 包"
               return 1
             fi
-            echo "$file 摘要校验通过"
+            echo "$1 结构校验通过"
           }
-          check "out/linuxqq_${VERSION}_amd64.deb" "$SHA_AMD"
-          check "out/linuxqq_${VERSION}_arm64.deb" "$SHA_ARM"
+          check_rpm() {
+            magic=$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')
+            if [ "$magic" != "edabeedb" ]; then
+              echo "::error::$1 不是有效的 rpm 包"
+              return 1
+            fi
+            echo "$1 结构校验通过"
+          }
+          check_appimage() {
+            if [ ! -s "$1" ]; then
+              echo "::error::$1 为空文件"
+              return 1
+            fi
+            if ! head -c 64 "$1" | grep -qa 'ELF'; then
+              echo "::error::$1 不是有效的 ELF 文件"
+              return 1
+            fi
+            echo "$1 结构校验通过"
+          }
+
+          check_deb "out/linuxqq_${VERSION}_amd64.deb"
+          check_deb "out/linuxqq_${VERSION}_arm64.deb"
+          check_deb "out/linuxqq_${VERSION}_loongarch64.deb"
+          check_rpm "out/linuxqq_${VERSION}_x86_64.rpm"
+          check_rpm "out/linuxqq_${VERSION}_aarch64.rpm"
+          check_appimage "out/linuxqq_${VERSION}_x86_64.AppImage"
+          check_appimage "out/linuxqq_${VERSION}_arm64.AppImage"
+          if [ -f "out/linuxqq_${VERSION}_mips64el.deb" ]; then
+            check_deb "out/linuxqq_${VERSION}_mips64el.deb"
+          fi
 
       - name: 重命名为统一格式
         env:
