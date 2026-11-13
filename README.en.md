@@ -72,8 +72,7 @@ tar -xJf QQ-<version>-amd64.tar.xz
 | Source | Coverage |
 | --- | --- |
 | Upstream [zydou/QQ-Linux](https://github.com/zydou/QQ-Linux) | 3.2.5 through 3.2.28, all historical assets mirrored as-is |
-| [flathub/com.qq.QQ](https://github.com/flathub/com.qq.QQ) manifest | Version numbers, official download URLs and sha256 baselines from 3.2.33 onward |
-| Tencent official CDN | Per-architecture packages for 3.2.33 and later |
+| Tencent official download document | Official direct links for every architecture from 3.2.33 onward |
 | [Rodert/qq-versions](https://github.com/Rodert/qq-versions) | Full architecture archives for 3.2.29, 3.2.31 and 3.2.32 |
 
 ## Automated updates
@@ -82,11 +81,11 @@ Three GitHub Actions workflows keep this repository current:
 
 | Workflow | Purpose |
 | --- | --- |
-| `qq` | Checks for a new official version daily, downloads every architecture and publishes it |
+| `qq` | Checks Tencent's official download document daily, downloads every architecture and publishes it |
 | `backfill` | Fills historical gaps listed in `.github/qq-backfill.tsv` |
 | `mirror-upstream` | Mirrors every release asset from upstream zydou/QQ-Linux into this repository |
 
-New releases are gated on Tencent's official sha256; a mismatch aborts the run instead of publishing a corrupt file.
+The `qq` workflow relies solely on Tencent-owned domains (`docs.qq.com`, `qqdl.gtimg.cn`) for both version discovery and package downloads, with no third-party repository involved. After downloading it validates package structure (the ar magic for deb, the rpm magic for rpm, the ELF header for AppImage) and aborts on mismatch rather than publishing a corrupt file.
 
 ## Notes
 

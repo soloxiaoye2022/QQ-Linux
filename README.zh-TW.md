@@ -72,8 +72,7 @@ tar -xJf QQ-<版本號>-amd64.tar.xz
 | 來源 | 涵蓋範圍 |
 | --- | --- |
 | 上游 [zydou/QQ-Linux](https://github.com/zydou/QQ-Linux) | 3.2.5 至 3.2.28，全部歷史資源原樣鏡像 |
-| [flathub/com.qq.QQ](https://github.com/flathub/com.qq.QQ) 清單 | 3.2.33 起的版本號、官方下載地址與 sha256 校驗基準 |
-| 騰訊官方 CDN | 3.2.33 及之後各架構安裝包 |
+| 騰訊官方下載文件頁 | 3.2.33 及之後各架構安裝包的官方直連 |
 | [Rodert/qq-versions](https://github.com/Rodert/qq-versions) | 3.2.29、3.2.31、3.2.32 的完整架構歸檔 |
 
 ## 自動更新
@@ -82,11 +81,11 @@ tar -xJf QQ-<版本號>-amd64.tar.xz
 
 | 工作流 | 作用 |
 | --- | --- |
-| `qq` | 每日檢查官方版本，有新版本時自動下載全部架構並發佈 |
+| `qq` | 每日檢查騰訊官方文件頁，有新版本時自動下載全部架構並發佈 |
 | `backfill` | 依 `.github/qq-backfill.tsv` 清單補齊歷史缺失版本 |
 | `mirror-upstream` | 將上游 zydou/QQ-Linux 的全部 Release 資源鏡像到本倉庫 |
 
-新版本發佈前會校驗官方 sha256，校驗失敗即中止，避免發佈損壞檔案。
+`qq` 工作流只以騰訊官方網域（`docs.qq.com`、`qqdl.gtimg.cn`）作為版本與安裝包來源，不依賴任何第三方倉庫。下載後會校驗安裝包結構（deb 的 ar 魔數、rpm 的 rpm 魔數、AppImage 的 ELF 標頭），校驗失敗即中止，避免發佈損壞檔案。
 
 ## 說明
 
