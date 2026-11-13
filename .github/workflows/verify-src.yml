@@ -1,0 +1,84 @@
+---
+name: verify-src
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 验证 Mac 镜像（A-Randomm-User）
+        run: |
+          set -uo pipefail
+          B=https://github.com/A-Randomm-User/macOS-save/releases/download/qq
+          for f in \
+            QQ_v7.0.3.54276.dmg \
+            QQ_v7.0.2.53644.dmg \
+            QQ_v7.0.1.52892.dmg \
+            QQ_7.0.0_260812_01.dmg \
+            QQ_6.9.99_260730_01.dmg \
+            QQ_6.9.98_260710_01.dmg \
+            QQ_6.9.96_260528_01.dmg \
+            QQ_6.9.95_260429_01.dmg \
+            QQ_6.9.93_260401_01.dmg \
+            QQ_6.9.91_260319_01.dmg \
+            QQ_6.9.90_260311_01.dmg \
+            QQ_6.9.89_260205_01.dmg \
+            QQ_6.9.88_260116_01.dmg \
+            QQ_6.9.87_260108_01.dmg \
+            QQ_6.9.86_251203_01.dmg \
+            QQ_6.9.85_251114_01.dmg \
+            QQ_6.9.83_251105_1.dmg \
+            QQ_6.9.82_251023_01.dmg \
+            QQ_v6.9.6-8827.dmg \
+            ; do
+            sz=$(curl -sIL --max-time 25 "$B/$f" | grep -i '^content-length' | tail -1 | tr -d '\r' | awk '{print $2}')
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-1023 --max-time 25 "$B/$f")
+            echo "MAC $code ${sz:-0} $f"
+          done
+
+      - name: 验证 Mac 官方直链
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.37/beta/65a3446e/QQ_v7.0.3.54276.dmg" \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.36/beta/837fcb63/QQ_v7.0.2.53644.dmg" \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.35/beta/110ab2aa/QQ_v7.0.1.52892.dmg" \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.33/release/57c59cd0/QQ_6.9.99_260730_01.dmg" \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/045f4292/QQ_6.9.96_260528_01.dmg" \
+            "https://dldir1v6.qq.com/qqfile/qq/QQNT/Mac/QQ_6.9.95_260429_01.dmg" \
+            "https://dldir1v6.qq.com/qqfile/qq/QQNT/Mac/QQ_6.9.82_251023_01.dmg" \
+            ; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 20 "$u")
+            echo "MACOFFICIAL $c $(basename $u)"
+          done
+
+      - name: 验证 QQ-Releases（Windows 实体）
+        run: |
+          set -uo pipefail
+          B=https://github.com/a1515333102/QQ-Releases/releases/download
+          for p in \
+            "9.9.37%2B3.2.35/QQ_9.9.37_261103_x64_01.exe" \
+            "9.9.36%2B3.2.34/QQ_9.9.36_260924_x64_01.exe" \
+            "9.9.35%2B3.2.33/QQ_9.9.35_260902_x64_01.exe" \
+            "9.9.33%2B3.2.32/QQ_9.9.33_260730_x64_01.exe" \
+            ; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-1023 --max-time 25 "$B/$p")
+            echo "WIN $c $(basename $p)"
+          done
+
+      - name: 验证 Android 与 APK 历史源
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://downv6.qq.com/qqweb/QQ_1/android_apk/9.3.85.43200_59f33114080dbd69.apk" \
+            "https://downv6.qq.com/qqweb/QQ_1/android_apk/Android_8.8.90.7975_537119543_32.apk" \
+            ; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-1023 --max-time 25 "$u")
+            echo "APK $c $(basename $u)"
+          done
+          echo "=== 找 APK 归档仓库 ==="
+          curl -s --max-time 25 "https://api.github.com/search/repositories?q=qq+apk+archive&per_page=8" \
+            | grep -oE '"full_name": "[^"]+"' | head -8
