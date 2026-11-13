@@ -6,18 +6,19 @@ This repository mirrors and archives historical and current installers for the o
 
 All `.deb`, `.rpm` and `.AppImage` files come from Tencent's official download sources, unmodified. Each `.tar.xz` is produced by extracting the matching `amd64` `.AppImage` and repacking it.
 
-## Download
-
-- Latest version: see the [latest release](https://github.com/soloxiaoye2022/QQ-Linux/releases/latest)
-- Historical versions: see [all releases](https://github.com/soloxiaoye2022/QQ-Linux/releases)
-
 ## Other platforms
 
 | Platform | Repository |
 | --- | --- |
+| Linux | current |
 | Windows | [QQ-Windows](https://github.com/soloxiaoye2022/QQ-Windows) |
 | macOS | [QQ-macOS](https://github.com/soloxiaoye2022/QQ-macOS) |
 | Android | [QQ-Android](https://github.com/soloxiaoye2022/QQ-Android) |
+
+## Download
+
+- Latest version: see the [latest release](https://github.com/soloxiaoye2022/QQ-Linux/releases/latest)
+- Historical versions: see [all releases](https://github.com/soloxiaoye2022/QQ-Linux/releases)
 
 ## Supported architectures
 
