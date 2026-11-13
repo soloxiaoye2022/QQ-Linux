@@ -1,0 +1,63 @@
+---
+name: probe-all
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 各平台官方链接可达性
+        run: |
+          set -uo pipefail
+          check() {
+            c=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 25 "$2")
+            echo "PROBE $c $1"
+          }
+          check "win-classic"   "https://qqdl.gtimg.cn/qqfile/qq/PCQQ/PCQQ9.7.25/QQ9.7.25.29417.exe"
+          check "win-nt-x64"    "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.37/release/a2ca1b61/QQ_9.9.37_261103_x64_01.exe"
+          check "win-nt-x86"    "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.37/release/a2ca1b61/QQ_9.9.37_261103_x86_01.exe"
+          check "win-nt-arm64"  "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.37/release/a2ca1b61/QQ_9.9.37_261103_arm64_01.exe"
+          check "mac-7.0.3"     "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.37/release/a8ffd03b/QQ_7.0.3_261103_01.dmg"
+          check "mac-7.0.0"     "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.33/release/126b7ce6/QQ_7.0.0_260812_01.dmg"
+          check "linux-beta"    "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.37/beta/816b3c79/linuxqq_3.2.35-54395_amd64.deb"
+          check "android-x64"   "https://downv6.qq.com/qqweb/QQ_1/android_apk/9.3.85.43200_59f33114080dbd69.apk"
+
+      - name: QQNTV2 与 QQNT 路径对比
+        run: |
+          set -uo pipefail
+          echo "=== QQNT 老路径（已知可下载）==="
+          curl -s -o /dev/null -w "QQNT-3.2.32 %{http_code}\n" -r 0-1023 --max-time 20 \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.33/release/3f89efc5/QQ_3.2.32_260812_amd64_01.deb"
+          echo "=== QQNTV2 同版本 ==="
+          curl -s -o /dev/null -w "QQNTV2-3.2.35 %{http_code}\n" -r 0-1023 --max-time 20 \
+            "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.37/release/816b3c79/QQ_3.2.35_261103_amd64_01.deb"
+          echo "=== QQNTV2 换 QQNT 路径试 ==="
+          curl -s -o /dev/null -w "QQNT-win %{http_code}\n" -r 0-1023 --max-time 20 \
+            "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.37/release/a2ca1b61/QQ_9.9.37_261103_x64_01.exe"
+
+      - name: Android 302 跟随
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://downv6.qq.com/qqweb/QQ_1/android_apk/9.3.85.43200_59f33114080dbd69.apk" \
+            "https://downv6.qq.com/qqweb/QQ_1/android_apk/Android_8.8.90.7975_537119543_32.apk" \
+            ; do
+            echo "=== $(basename $u) ==="
+            curl -s -o /dev/null -w "final=%{http_code} size=%{size_download} url=%{url_effective}\n" \
+              -L -r 0-1023 --max-time 30 "$u"
+          done
+
+      - name: Rodert 站点数据源
+        run: |
+          set -uo pipefail
+          echo "=== 站点 HTML ==="
+          curl -s --max-time 30 "https://rodert.github.io/qq-versions/" -o site.html
+          echo "大小: $(stat -c%s site.html)"
+          echo "=== 是否有 JSON 数据源 ==="
+          for p in "data.json" "releases.json" "index.json" "packages.json"; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://rodert.github.io/qq-versions/$p")
+            echo "DATA $c $p"
+          done
