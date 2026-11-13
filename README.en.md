@@ -20,6 +20,8 @@ All `.deb`, `.rpm` and `.AppImage` files come from Tencent's official download s
 | loongarch64 | `.deb` | Loongson platform |
 | mips64el | `.deb` | Loongson MIPS platform, no longer published by Tencent since 3.2.34 |
 
+Some versions were not published for every architecture — `3.2.30-50828`, for example, only ships `amd64` and `arm64` `.deb` files. Always check the asset list on the corresponding release page.
+
 ## File naming
 
 ```
