@@ -6,18 +6,19 @@
 
 `.deb`、`.rpm`、`.AppImage` 均取自腾讯官方下载源，未做任何修改。`.tar.xz` 由同版本 `amd64` 的 `.AppImage` 解包后重新打包生成。
 
-## 下载
-
-- 最新版本：前往 [Releases 最新页](https://github.com/soloxiaoye2022/QQ-Linux/releases/latest)
-- 历史版本：前往 [全部 Releases](https://github.com/soloxiaoye2022/QQ-Linux/releases)
-
 ## 其它平台
 
 | 平台 | 仓库 |
 | --- | --- |
+| Linux | 当前 |
 | Windows | [QQ-Windows](https://github.com/soloxiaoye2022/QQ-Windows) |
 | macOS | [QQ-macOS](https://github.com/soloxiaoye2022/QQ-macOS) |
 | Android | [QQ-Android](https://github.com/soloxiaoye2022/QQ-Android) |
+
+## 下载
+
+- 最新版本：前往 [Releases 最新页](https://github.com/soloxiaoye2022/QQ-Linux/releases/latest)
+- 历史版本：前往 [全部 Releases](https://github.com/soloxiaoye2022/QQ-Linux/releases)
 
 ## 支持架构
 
