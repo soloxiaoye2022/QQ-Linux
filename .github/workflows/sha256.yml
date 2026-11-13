@@ -1,0 +1,125 @@
+---
+name: sha256
+
+# 为已发布的 Release 生成 SHA256SUMS。
+# 优先使用 GitHub API 返回的 digest 字段，无需重新下载文件；
+# digest 缺失时才回退到实际下载计算。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 只处理指定 tag（空格分隔；留空表示全部）
+        required: false
+        default: ''
+      force:
+        description: 已存在 SHA256SUMS 也重新生成
+        type: boolean
+        required: false
+        default: false
+
+permissions: write-all
+
+concurrency:
+  group: sha256
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.list.outputs.tags }}
+    steps:
+      - name: 生成待处理 tag 列表
+        id: list
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAGS: ${{ inputs.tags }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_TAGS" ]; then
+            TAGS="$INPUT_TAGS"
+          else
+            TAGS=$(gh release list --repo "${{ github.repository }}" --limit 500 \
+              --json tagName --jq '.[].tagName')
+          fi
+
+          SELECTED=""
+          for t in $TAGS; do
+            if [ "$FORCE" != "true" ]; then
+              HAS=$(gh release view "$t" --repo "${{ github.repository }}" \
+                --json assets --jq '[.assets[].name] | index("SHA256SUMS") // empty')
+              if [ -n "$HAS" ]; then
+                echo "跳过 $t（已有 SHA256SUMS）"
+                continue
+              fi
+            fi
+            SELECTED="$SELECTED $t"
+          done
+
+          JSON=$(printf '%s' "$SELECTED" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
+          echo "待处理: $JSON"
+          echo "tags=$JSON" >> "$GITHUB_OUTPUT"
+
+  gen:
+    needs: prepare
+    if: needs.prepare.outputs.tags != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        tag: ${{ fromJSON(needs.prepare.outputs.tags) }}
+    steps:
+      - name: 生成 ${{ matrix.tag }} 的 SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" > meta.json
+
+          : > SHA256SUMS
+          MISSING=0
+          while IFS=$'\t' read -r name digest; do
+            [ -z "$name" ] && continue
+            case "$name" in
+              SHA256SUMS|SHA1SUMS) continue ;;
+            esac
+            if [ -n "$digest" ] && [ "$digest" != "null" ]; then
+              hash="${digest#sha256:}"
+              echo "$hash  $name" >> SHA256SUMS
+            else
+              echo "::warning::$TAG/$name 无 digest，需回退下载"
+              MISSING=$((MISSING+1))
+              echo "MISSING	$name" >> missing.tsv
+            fi
+          done < <(jq -r '.assets[] | [.name, (.digest // "")] | @tsv' meta.json)
+
+          # 回退：digest 缺失的资产实际下载后计算
+          if [ -s missing.tsv ]; then
+            while IFS=$'\t' read -r _ name; do
+              url=$(jq -r --arg n "$name" '.assets[] | select(.name==$n) | .browser_download_url' meta.json)
+              echo "下载计算 $name"
+              curl -fsSL --retry 3 --connect-timeout 30 -o "$name" "$url"
+              sha256sum "$name" >> SHA256SUMS
+              rm -f "$name"
+            done < missing.tsv
+          fi
+
+          sort -k2 SHA256SUMS -o SHA256SUMS
+          echo "生成 $(wc -l < SHA256SUMS) 条记录"
+          cat SHA256SUMS
+
+      - name: 上传 SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" SHA256SUMS --repo "$REPO" --clobber
+          echo "已上传 $TAG/SHA256SUMS"
