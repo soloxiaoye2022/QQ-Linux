@@ -1,0 +1,127 @@
+---
+name: mirror-upstream
+
+# 把上游 zydou/QQ-Linux 的全部 Release 资源搬运到本仓库。
+# 在 runner 上完成下载与上传，不占用本地带宽与磁盘。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 只搬运指定 tag（空格分隔；留空表示全部）
+        required: false
+        default: ''
+      force:
+        description: 强制重搬（忽略“已存在”判断）
+        type: boolean
+        required: false
+        default: false
+
+permissions: write-all
+
+concurrency:
+  group: mirror-upstream
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.list.outputs.tags }}
+    steps:
+      - name: 生成待搬运 tag 列表
+        id: list
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAGS: ${{ inputs.tags }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_TAGS" ]; then
+            echo "使用手动指定的 tag 列表"
+            TAGS="$INPUT_TAGS"
+          else
+            echo "拉取上游全部 tag"
+            TAGS=$(gh release list --repo zydou/QQ-Linux --limit 500 --json tagName --jq '.[].tagName')
+          fi
+
+          RESULT=""
+          for t in $TAGS; do
+            if [ "$FORCE" != "true" ]; then
+              UP=$(gh api "repos/zydou/QQ-Linux/releases/tags/$t" --jq '.assets | length')
+              OURS=$(gh api "repos/${{ github.repository }}/releases/tags/$t" --jq '.assets | length' 2>/dev/null || echo 0)
+              if [ "$UP" = "$OURS" ] && [ "$UP" != "0" ]; then
+                echo "跳过 $t（上游 $UP 个资源，本仓库已有 $OURS 个）"
+                continue
+              fi
+            fi
+            RESULT="$RESULT $t"
+          done
+
+          JSON=$(printf '%s' "$RESULT" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
+          echo "待搬运: $JSON"
+          echo "tags=$JSON" >> "$GITHUB_OUTPUT"
+
+  mirror:
+    needs: prepare
+    if: needs.prepare.outputs.tags != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        tag: ${{ fromJSON(needs.prepare.outputs.tags) }}
+    steps:
+      - name: 搬运 Release ${{ matrix.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          gh api "repos/zydou/QQ-Linux/releases/tags/$TAG" > meta.json
+
+          TITLE=$(jq -r '.name // .tag_name' meta.json)
+          jq -r '.body // ""' meta.json > body.txt
+          jq -r '.assets[] | [.name, (.size|tostring), .browser_download_url] | @tsv' meta.json > assets.tsv
+          echo "标题: $TITLE"
+          echo "资源数: $(wc -l < assets.tsv)"
+
+          FAILED=0
+          while IFS=$'\t' read -r name size url; do
+            [ -z "$name" ] && continue
+            echo "下载 $name ($size 字节)"
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 30 \
+                   -C - -o "out/$name" "$url"; then
+                actual=$(stat -c%s "out/$name" 2>/dev/null || echo 0)
+                if [ "$actual" = "$size" ]; then
+                  ok=1
+                  break
+                fi
+                echo "大小不符（$actual / $size），重试 $attempt"
+              else
+                echo "下载失败，重试 $attempt"
+              fi
+              sleep 5
+            done
+            if [ "$ok" != "1" ]; then
+              echo "::error::资源 $name 下载失败"
+              FAILED=1
+            fi
+          done < assets.tsv
+
+          if [ "$FAILED" = "1" ]; then
+            echo "::error::存在下载失败的资源，中止上传"
+            exit 1
+          fi
+
+          echo "全部资源下载完成，开始创建 Release"
+          if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --title "$TITLE" --notes-file body.txt
+          fi
+          gh release upload "$TAG" out/* --repo "$REPO" --clobber
+          echo "已发布 $TAG"

@@ -20,84 +20,172 @@ jobs:
     outputs:
       trigger: ${{ steps.check.outputs.trigger }}
       version: ${{ steps.check.outputs.version }}
+      base: ${{ steps.check.outputs.base }}
+      sha256_amd64: ${{ steps.check.outputs.sha256_amd64 }}
+      sha256_arm64: ${{ steps.check.outputs.sha256_arm64 }}
     steps:
-      - name: check if we need to trigger a build
+      - name: 从 flathub 清单读取最新版本与下载目录
         id: check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(wget -q https://github.com/flathub/com.qq.QQ/raw/refs/heads/master/com.qq.QQ.metainfo.xml -O - | grep -oP 'release version="\K[^"]*' | head -n 1)
-          CURRENT="${VERSION//_/-}"
-          if ! gh api "/repos/${{github.repository}}/releases/tags/$CURRENT" > /dev/null 2>&1; then
-          echo "trigger=true" >> "$GITHUB_OUTPUT"
-          echo "Build version=$CURRENT"
-          else
-          echo "trigger=false" >> "$GITHUB_OUTPUT"
-          echo "Skip version=$CURRENT"
+          set -euo pipefail
+          # flathub 由 x-checker 机器人自动跟进腾讯官方发版，清单里带有
+          # 真实的 linuxqq deb 下载地址与 sha256，可作为版本与完整性基准。
+          curl -fsSL --retry 3 \
+            https://raw.githubusercontent.com/flathub/com.qq.QQ/master/com.qq.QQ.yaml -o flat.yaml
+
+          AMD_URL=$(grep -oP 'https://qqdl\.gtimg\.cn/[^ ]*linuxqq_[^ ]*_amd64\.deb' flat.yaml | head -n 1)
+          ARM_URL=$(grep -oP 'https://qqdl\.gtimg\.cn/[^ ]*linuxqq_[^ ]*_arm64\.deb' flat.yaml | head -n 1)
+          if [ -z "$AMD_URL" ]; then
+            echo "::error::未能从 flathub 清单解析出 amd64 下载地址"
+            exit 1
           fi
-          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          VERSION=$(basename "$AMD_URL" | sed -E 's/^linuxqq_([^_]+)_amd64\.deb$/\1/')
+          BASE=$(dirname "$AMD_URL")
+
+          SHA_AMD=$(awk -v u="$AMD_URL" '
+            $0 ~ "url: "u { found=1; next }
+            found && /sha256:/ { print $2; exit }' flat.yaml)
+          SHA_ARM=$(awk -v u="$ARM_URL" '
+            $0 ~ "url: "u { found=1; next }
+            found && /sha256:/ { print $2; exit }' flat.yaml)
+
+          echo "版本: $VERSION"
+          echo "目录: $BASE"
+          echo "amd64 sha256: $SHA_AMD"
+          echo "arm64 sha256: $SHA_ARM"
+
+          if gh api "/repos/${{ github.repository }}/releases/tags/$VERSION" > /dev/null 2>&1; then
+            echo "trigger=false" >> "$GITHUB_OUTPUT"
+            echo "跳过，本仓库已存在版本 $VERSION"
+          else
+            echo "trigger=true" >> "$GITHUB_OUTPUT"
+            echo "需要发布版本 $VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "sha256_amd64=$SHA_AMD" >> "$GITHUB_OUTPUT"
+          echo "sha256_arm64=$SHA_ARM" >> "$GITHUB_OUTPUT"
 
   build:
     needs: trigger
     if: needs.trigger.outputs.trigger == 'true'
     name: build
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
-      - uses: actions/checkout@main
-      - name: download
+      - name: 下载各架构安装包
+        env:
+          BASE: ${{ needs.trigger.outputs.base }}
+          VERSION: ${{ needs.trigger.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+
+          # 必需架构：任一失败即中止，避免发布残缺版本
+          REQUIRED="amd64.deb arm64.deb x86_64.rpm aarch64.rpm x86_64.AppImage arm64.AppImage loongarch64.deb"
+          # 可选架构：官方部分版本不再提供，缺失时仅告警
+          OPTIONAL="mips64el.deb"
+
+          for a in $REQUIRED; do
+            url="$BASE/linuxqq_${VERSION}_${a}"
+            echo "下载 $url"
+            curl -fsSL --retry 5 --retry-delay 10 --connect-timeout 30 \
+              -o "out/linuxqq_${VERSION}_${a}" "$url"
+          done
+
+          for a in $OPTIONAL; do
+            url="$BASE/linuxqq_${VERSION}_${a}"
+            if curl -fsSL --retry 2 --retry-delay 5 --connect-timeout 30 \
+                 -o "out/linuxqq_${VERSION}_${a}" "$url"; then
+              echo "可选架构 $a 已获取"
+            else
+              echo "::warning::可选架构 $a 在该版本未发布，跳过"
+              rm -f "out/linuxqq_${VERSION}_${a}"
+            fi
+          done
+
+          ls -lh out
+
+      - name: 校验官方 sha256
+        env:
+          VERSION: ${{ needs.trigger.outputs.version }}
+          SHA_AMD: ${{ needs.trigger.outputs.sha256_amd64 }}
+          SHA_ARM: ${{ needs.trigger.outputs.sha256_arm64 }}
+        run: |
+          set -euo pipefail
+          check() {
+            file="$1"; want="$2"
+            [ -z "$want" ] && { echo "跳过 $file 校验（清单无摘要）"; return 0; }
+            got=$(sha256sum "$file" | cut -d' ' -f1)
+            if [ "$got" != "$want" ]; then
+              echo "::error::$file 摘要不符：期望 $want，实际 $got"
+              return 1
+            fi
+            echo "$file 摘要校验通过"
+          }
+          check "out/linuxqq_${VERSION}_amd64.deb" "$SHA_AMD"
+          check "out/linuxqq_${VERSION}_arm64.deb" "$SHA_ARM"
+
+      - name: 重命名为统一格式
         env:
           VERSION: ${{ needs.trigger.outputs.version }}
         run: |
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_amd64_01.deb" > urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_x86_64_01.rpm" >> urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_x86_64_01.AppImage" >> urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_arm64_01.deb" >> urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_aarch64_01.rpm" >> urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_arm64_01.AppImage" >> urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_loongarch64_01.deb" >> urls.txt
-          echo "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/QQ_${VERSION//-/_}_mips64el_01.deb" >> urls.txt
-          cat urls.txt
-          wget --no-verbose -i urls.txt
-          rm -rf urls.txt
-          ls -lh
-
-      - name: rename
-        run: |
-          for file in QQ*; do
-          name="${file//x86_64/amd64}"
-          name="${name//aarch64/arm64}"
-          architecture=$(echo "$name" | sed -E 's/QQ_[^_]+_[^_]+_([^_]+)_.*/\1/')
-          ext=${file##*.}
-          new_file="QQ-${{ needs.trigger.outputs.version }}-${architecture}.${ext}"
-          mv "$file" "$new_file"
+          set -euo pipefail
+          cd out
+          for file in linuxqq_*; do
+            rest="${file#linuxqq_${VERSION}_}"
+            arch="${rest%.*}"
+            ext="${rest##*.}"
+            case "$arch" in
+              x86_64) arch=amd64 ;;
+              aarch64) arch=arm64 ;;
+            esac
+            mv "$file" "QQ-${VERSION}-${arch}.${ext}"
           done
           ls -lh
 
-      - name: create tarball
+      - name: 生成 amd64 tar.xz 归档
+        env:
+          VERSION: ${{ needs.trigger.outputs.version }}
         run: |
-          chmod +x ./QQ-${{ needs.trigger.outputs.version }}-amd64.AppImage
-          ./QQ-${{ needs.trigger.outputs.version }}-amd64.AppImage --appimage-extract
+          set -euo pipefail
+          cd out
+          chmod +x "QQ-${VERSION}-amd64.AppImage"
+          ./QQ-${VERSION}-amd64.AppImage --appimage-extract > /dev/null
           mv squashfs-root qq
-          tar -cJvf QQ-${{ needs.trigger.outputs.version }}-amd64.tar.xz qq
-          sha1sum QQ-* > SHA1SUMS
+          tar -cJf "QQ-${VERSION}-amd64.tar.xz" qq
+          rm -rf qq
+          ls -lh
 
-      - name: create release note
+      - name: 生成校验文件与发布说明
+        env:
+          VERSION: ${{ needs.trigger.outputs.version }}
         run: |
-          echo '## SHA1 Checksums' > note.md
-          echo '```' >> note.md  # Do not use double quotes
-          cat SHA1SUMS >> note.md
-          echo '```' >> note.md
-          cat note.md
+          set -euo pipefail
+          cd out
+          sha1sum QQ-* > SHA1SUMS
+          {
+            echo '## SHA1 Checksums'
+            echo '```'
+            cat SHA1SUMS
+            echo '```'
+          } > ../note.md
+          cat ../note.md
 
-      - name: release
+      - name: 发布
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.trigger.outputs.version }}
         run: |
-          gh release create "${VERSION}" --notes-file note.md --title "QQ Linux ${VERSION}" --repo "${{github.repository}}" || true
-          gh release upload "${VERSION}" ./QQ* --repo "${{github.repository}}"
-          gh release upload "${VERSION}" ./SHA1SUMS --repo "${{github.repository}}"
-          
+          set -euo pipefail
+          gh release create "$VERSION" --repo "${{ github.repository }}" \
+            --title "QQ Linux ${VERSION}" --notes-file note.md || true
+          gh release upload "$VERSION" out/QQ* --repo "${{ github.repository }}" --clobber
+          gh release upload "$VERSION" out/SHA1SUMS --repo "${{ github.repository }}" --clobber
+
   # https://github.com/liskin/gh-workflow-keepalive
   keepalive:
     if: github.event_name == 'schedule'
@@ -118,4 +206,3 @@ jobs:
           workflow="${workflow#${GITHUB_REPOSITORY}/.github/workflows/}"
           echo "Re-enable $workflow"
           gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
-

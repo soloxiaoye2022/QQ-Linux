@@ -1,0 +1,154 @@
+---
+name: backfill
+
+# 补齐上游 zydou/QQ-Linux 停更后官方继续发布的 Linux QQ 版本。
+# 清单见 .github/qq-backfill.tsv，格式：TAG<TAB>源地址<TAB>归档文件名
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 只处理指定 tag（空格分隔；留空表示清单内全部）
+        required: false
+        default: ''
+      force:
+        description: 强制重跑（忽略“已存在”判断）
+        type: boolean
+        required: false
+        default: false
+
+permissions: write-all
+
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.list.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析清单，筛出待处理的 tag
+        id: list
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAGS: ${{ inputs.tags }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          grep -v '^#' .github/qq-backfill.tsv | grep -v '^[[:space:]]*$' > all.tsv
+          echo "清单条目数: $(wc -l < all.tsv)"
+
+          mapfile -t ALL_TAGS < <(cut -f1 all.tsv | awk '!seen[$0]++')
+          echo "清单版本: ${ALL_TAGS[*]}"
+
+          SELECTED=()
+          for t in "${ALL_TAGS[@]}"; do
+            if [ -n "$INPUT_TAGS" ] && ! printf '%s\n' $INPUT_TAGS | grep -qx "$t"; then
+              continue
+            fi
+            if [ "$FORCE" != "true" ]; then
+              EXPECT=$(awk -F'\t' -v t="$t" '$1==t' all.tsv | wc -l)
+              OURS=$(gh api "repos/${{ github.repository }}/releases/tags/$t" --jq '.assets | length' 2>/dev/null || echo 0)
+              if [ "$EXPECT" = "$OURS" ]; then
+                echo "跳过 $t（清单 $EXPECT 个，本仓库已有 $OURS 个）"
+                continue
+              fi
+            fi
+            SELECTED+=("$t")
+          done
+
+          if [ ${#SELECTED[@]} -eq 0 ]; then
+            JSON="[]"
+          else
+            JSON=$(printf '%s\n' "${SELECTED[@]}" | jq -R . | jq -sc .)
+          fi
+          echo "待补齐: $JSON"
+          echo "tags=$JSON" >> "$GITHUB_OUTPUT"
+
+  fetch:
+    needs: prepare
+    if: needs.prepare.outputs.tags != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        tag: ${{ fromJSON(needs.prepare.outputs.tags) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 ${{ matrix.tag }} 的全部架构
+        env:
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          grep -v '^#' .github/qq-backfill.tsv | awk -F'\t' -v t="$TAG" '$1==t {print $2"\t"$3}' > plan.tsv
+          echo "本版本文件数: $(wc -l < plan.tsv)"
+
+          FAILED=0
+          while IFS=$'\t' read -r url name; do
+            [ -z "$name" ] && continue
+            echo "下载 $name"
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 30 -o "out/$name" "$url"; then
+                if [ -s "out/$name" ]; then ok=1; break; fi
+                echo "文件为空，重试 $attempt"
+              else
+                echo "下载失败，重试 $attempt"
+              fi
+              sleep 5
+            done
+            [ "$ok" = "1" ] || { echo "::error::$name 下载失败"; FAILED=1; }
+          done < plan.tsv
+
+          if [ "$FAILED" = "1" ]; then
+            echo "::error::存在下载失败的资源，中止发布"
+            exit 1
+          fi
+
+          if [ -f "out/QQ-$TAG-amd64.AppImage" ]; then
+            echo "从 AppImage 生成 tar.xz 归档"
+            chmod +x "out/QQ-$TAG-amd64.AppImage"
+            ( cd out && ./QQ-$TAG-amd64.AppImage --appimage-extract > /dev/null )
+            mv out/squashfs-root out/qq
+            tar -cJf "out/QQ-$TAG-amd64.tar.xz" -C out qq
+            rm -rf out/qq
+          fi
+
+          ls -lh out
+          cd out
+          sha1sum QQ-* > SHA1SUMS
+          cat SHA1SUMS
+
+      - name: 生成发布说明
+        env:
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## SHA1 Checksums'
+            echo '```'
+            cat out/SHA1SUMS
+            echo '```'
+          } > note.md
+          cat note.md
+
+      - name: 发布 ${{ matrix.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --title "QQ Linux ${TAG}" --notes-file note.md
+          fi
+          gh release upload "$TAG" out/* --repo "$REPO" --clobber
+          echo "已发布 $TAG"
