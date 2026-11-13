@@ -1,0 +1,73 @@
+---
+name: hunt6
+
+on:
+  workflow_dispatch:
+
+jobs:
+  wayback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wayback CDX 前缀索引
+        run: |
+          set -uo pipefail
+          echo "=== CDX: dldir1v6 QQNT/Linux 前缀 ==="
+          timeout 100 curl -s "https://web.archive.org/cdx/search/cdx?url=dldir1v6.qq.com/qqfile/qq/QQNT/Linux/&matchType=prefix&output=text&fl=original,timestamp,statuscode&collapse=urlkey&limit=500" 2>/dev/null | head -100 || echo "TIMEOUT"
+
+          echo "=== CDX: dldir1v6 3.2.26 通配 ==="
+          timeout 100 curl -s "https://web.archive.org/cdx/search/cdx?url=dldir1v6.qq.com&matchType=domain&filter=original:.*3\\.2\\.26.*&output=text&fl=original,timestamp,statuscode&collapse=urlkey&limit=200" 2>/dev/null | head -60 || echo "TIMEOUT"
+
+      - name: Wayback 具体快照查询
+        run: |
+          set -uo pipefail
+          for f in \
+            "QQ_3.2.26_260319_amd64_01.deb" \
+            "QQ_3.2.26_260319_arm64_01.deb" \
+            "QQ_3.2.26_260319_x86_64_01.rpm" \
+            "QQ_3.2.26_260319_x86_64_01.AppImage" \
+            "QQ_3.2.26_260319_loongarch64_01.deb" \
+            "QQ_3.2.26_260319_mips64el_01.deb" \
+            ; do
+            u="dldir1v6.qq.com/qqfile/qq/QQNT/Linux/$f"
+            echo "=== $f ==="
+            timeout 40 curl -s "https://archive.org/wayback/available?url=$u" 2>/dev/null || echo "TIMEOUT"
+            echo ""
+          done
+
+  thirdparty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: 第三方软件站搜索
+        run: |
+          set -uo pipefail
+          for q in "QQ_3.2.26_260319" "linuxqq+3.2.26-260319"; do
+            echo "=== duckduckgo: $q ==="
+            timeout 30 curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0" \
+              "https://html.duckduckgo.com/html/?q=$q" 2>/dev/null \
+              | grep -oE 'https?://[^"<> ]{20,150}' | grep -viE 'duckduckgo|w3\.org' | sort -u | head -20 || echo "TIMEOUT"
+          done
+
+      - name: Gitee 与码云搜索
+        run: |
+          set -uo pipefail
+          echo "=== gitee 仓库搜索 ==="
+          timeout 25 curl -s "https://gitee.com/api/v5/search/repositories?q=linuxqq&per_page=20" 2>/dev/null \
+            | grep -oE '"full_name":"[^"]+"' | head -20 || echo "TIMEOUT"
+          echo "=== gitee QQ-Linux ==="
+          timeout 25 curl -s "https://gitee.com/api/v5/search/repositories?q=QQ-Linux&per_page=20" 2>/dev/null \
+            | grep -oE '"full_name":"[^"]+"' | head -20 || echo "TIMEOUT"
+
+      - name: 腾讯官方旧版页面存档
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://im.qq.com/rainbow/linuxQQDownload" \
+            "https://im.qq.com/linuxqq/download.html" \
+            ; do
+            echo "=== $u ==="
+            timeout 30 curl -s "$u" 2>/dev/null | grep -oE '3\.2\.2[0-9][^"<>,]{0,40}' | sort -u | head -10 || echo "TIMEOUT"
+          done
+          echo "=== wayback 上的 linuxQQDownload ==="
+          timeout 60 curl -s "https://web.archive.org/cdx/search/cdx?url=im.qq.com/rainbow/linuxQQDownload&output=text&fl=timestamp,statuscode&limit=50" 2>/dev/null | head -30 || echo "TIMEOUT"
