@@ -1,0 +1,80 @@
+---
+name: hunt4
+
+on:
+  workflow_dispatch:
+
+jobs:
+  wide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 腾讯其它 CDN 域名
+        run: |
+          set -uo pipefail
+          F=QQ_3.2.26_260319_amd64_01.deb
+          for h in \
+            "https://dldir1.qq.com/qqfile/qq/QQNT/Linux/$F" \
+            "https://dldir2.qq.com/qqfile/qq/QQNT/Linux/$F" \
+            "https://dldir3.qq.com/qqfile/qq/QQNT/Linux/$F" \
+            "https://dl.qq.com/qqfile/qq/QQNT/Linux/$F" \
+            "https://dlsw.qq.com/qqfile/qq/QQNT/Linux/$F" \
+            "https://dlsw2.qq.com/qqfile/qq/QQNT/Linux/$F" \
+            "https://dldir1v6.qq.com/qqfile/QQNT/$F" \
+            "https://dldir1v6.qq.com/qqfile/qq/QQNT/$F" \
+            "https://qqdl.gtimg.cn/qqfile/qq/QQNT/Linux/$F" \
+            "https://dl.qq.com/qqfile/QQNT/Linux/$F" \
+            ; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 12 "$h")
+            echo "CDN $c $h"
+          done
+
+      - name: 腾讯软件中心与镜像
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://pc.qq.com/detail/0/detail_25760.html" \
+            "https://soft.qq.com/" \
+            "https://mirrors.cloud.tencent.com/" \
+            ; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$u")
+            echo "SITE $c $u"
+          done
+          echo "=== 腾讯云镜像站 deepin/ubuntu 目录 ==="
+          curl -s --max-time 25 "https://mirrors.cloud.tencent.com/deepin/pool/main/l/linuxqq/" | grep -oE 'linuxqq[^"<> ]*\.deb' | sort -u | head -20
+
+      - name: 阿里云/华为云/网易镜像
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://mirrors.aliyun.com/deepin/pool/main/l/linuxqq/" \
+            "https://mirrors.huaweicloud.com/deepin/pool/main/l/linuxqq/" \
+            "https://mirrors.163.com/deepin/pool/main/l/linuxqq/" \
+            "https://mirrors.cloud.tencent.com/deepin/pool/main/l/linuxqq/" \
+            "https://mirror.nju.edu.cn/deepin/pool/main/l/linuxqq/" \
+            "https://mirrors.cqu.edu.cn/deepin/pool/main/l/linuxqq/" \
+            "https://mirrors.zju.edu.cn/deepin/pool/main/l/linuxqq/" \
+            ; do
+            echo "--- $u"
+            curl -s --max-time 20 "$u" | grep -oE 'linuxqq[^"<> ]*\.deb' | sort -u | head -10
+          done
+
+      - name: 搜索引擎直链
+        run: |
+          set -uo pipefail
+          for q in "%22QQ_3.2.26_260319%22" "%223.2.26_260319%22" "linuxqq+3.2.26+260319+deb"; do
+            echo "=== bing: $q ==="
+            curl -s --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0" \
+              "https://www.bing.com/search?q=$q" \
+              | grep -oE 'https?://[a-zA-Z0-9./_%?=&#+-]{15,160}' \
+              | grep -viE 'bing|microsoft|msn|go\.micro|w3\.org|schema' | sort -u | head -20
+          done
+
+      - name: flathub 构建产物
+        run: |
+          set -uo pipefail
+          echo "=== flathub build artifacts ==="
+          curl -s --max-time 30 "https://dl.flathub.org/repo/appstream/com.qq.QQ.flatpakref" | head -20
+          echo "=== flathub repo ==="
+          c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://dl.flathub.org/repo/summary")
+          echo "SUMMARY $c"
