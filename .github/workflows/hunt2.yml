@@ -1,0 +1,82 @@
+---
+name: hunt2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bypass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 防盗链绕过测试
+        run: |
+          set -uo pipefail
+          U="https://qqdl.gtimg.cn/qqfile/QQNTV2/QQ_3.2.26_260319_amd64_01.deb"
+
+          try() {
+            label="$1"; shift
+            code=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 20 "$@" "$U")
+            echo "TRY $code $label"
+          }
+
+          try "no-header"
+          try "referer-docs" -e "https://docs.qq.com/doc/DVXNoRlpKaWhEY015"
+          try "referer-imqq" -e "https://im.qq.com/"
+          try "referer-imqq-linux" -e "https://im.qq.com/index/#/linux"
+          try "ua-chrome" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          try "ua+ref-docs" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" -e "https://docs.qq.com/doc/DVXNoRlpKaWhEY015"
+          try "origin-docs" -H "Origin: https://docs.qq.com"
+          try "sec-fetch" -H "Sec-Fetch-Dest: document" -H "Sec-Fetch-Mode: navigate" -H "Sec-Fetch-Site: same-site" -e "https://docs.qq.com/"
+          try "accept-all" -H "Accept: */*" -H "Accept-Language: zh-CN,zh;q=0.9" -e "https://docs.qq.com/doc/DVXNoRlpKaWhEY015" -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+          try "no-range" -H "Range:"
+
+          echo "--- 无 Range 完整 GET 试探 ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$U")
+          echo "FULLGET $code"
+
+          echo "--- 对比已知可下载的 3.2.35 ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 20 "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.37/beta/816b3c79/linuxqq_3.2.35-54395_amd64.deb")
+          echo "CONTROL $code"
+
+      - name: 探测同目录其它命名
+        run: |
+          set -uo pipefail
+          BASE="https://qqdl.gtimg.cn/qqfile/QQNTV2"
+          for p in \
+            "9.9.30/release/00e6a3e7/QQ_3.2.26_260319_amd64_01.deb" \
+            "9.9.30/beta/00e6a3e7/QQ_3.2.26_260319_amd64_01.deb" \
+            "9.9.29/release/QQ_3.2.26_260319_amd64_01.deb" \
+            "9.9.30/release/QQ_3.2.26_260319_amd64_01.deb" \
+            ; do
+            u="$BASE/$p"
+            c=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 15 "$u")
+            echo "PATH $c $p"
+          done
+
+      - name: 探测 3.2.29/31/32 是否也 403
+        run: |
+          set -uo pipefail
+          for u in \
+            "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_amd64_01.deb" \
+            "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_amd64_01.deb" \
+            "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.33/release/3f89efc5/QQ_3.2.32_260812_amd64_01.deb" \
+            "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.33/release/3f89efc5/QQ_3.2.32_260812_mips64el_01.deb" \
+            ; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -r 0-1023 --max-time 15 "$u")
+            echo "OLD $c $(basename $u)"
+          done
+
+      - name: archive.org 查询
+        run: |
+          set -uo pipefail
+          for u in \
+            "dldir1v6.qq.com/qqfile/qq/QQNT/Linux/QQ_3.2.26_260319_amd64_01.deb" \
+            "qqdl.gtimg.cn/qqfile/QQNTV2/QQ_3.2.26_260319_amd64_01.deb" \
+            ; do
+            echo "=== $u ==="
+            timeout 45 curl -s "http://archive.org/wayback/available?url=$u" || echo "TIMEOUT"
+            echo ""
+          done
+          echo "=== CDX ==="
+          timeout 60 curl -s "https://web.archive.org/cdx/search/cdx?url=qqdl.gtimg.cn/qqfile/QQNTV2*&output=text&fl=original,timestamp,statuscode&collapse=urlkey&limit=100" || echo "CDX TIMEOUT"
