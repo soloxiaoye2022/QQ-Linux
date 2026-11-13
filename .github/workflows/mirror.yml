@@ -119,6 +119,10 @@ jobs:
             exit 1
           fi
 
+          echo "补充计算 SHA256SUMS"
+          ( cd out && sha256sum QQ-* > SHA256SUMS )
+          cat out/SHA256SUMS
+
           echo "全部资源下载完成，开始创建 Release"
           if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$REPO" --title "$TITLE" --notes-file body.txt

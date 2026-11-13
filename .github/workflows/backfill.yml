@@ -125,7 +125,8 @@ jobs:
           ls -lh out
           cd out
           sha1sum QQ-* > SHA1SUMS
-          cat SHA1SUMS
+          sha256sum QQ-* > SHA256SUMS
+          cat SHA256SUMS
 
       - name: 生成发布说明
         env:
@@ -133,6 +134,11 @@ jobs:
         run: |
           set -euo pipefail
           {
+            echo '## SHA256 Checksums'
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+            echo ''
             echo '## SHA1 Checksums'
             echo '```'
             cat out/SHA1SUMS

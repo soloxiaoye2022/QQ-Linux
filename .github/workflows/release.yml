@@ -185,7 +185,13 @@ jobs:
           set -euo pipefail
           cd out
           sha1sum QQ-* > SHA1SUMS
+          sha256sum QQ-* > SHA256SUMS
           {
+            echo '## SHA256 Checksums'
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo ''
             echo '## SHA1 Checksums'
             echo '```'
             cat SHA1SUMS
@@ -202,7 +208,7 @@ jobs:
           gh release create "$VERSION" --repo "${{ github.repository }}" \
             --title "QQ Linux ${VERSION}" --notes-file note.md || true
           gh release upload "$VERSION" out/QQ* --repo "${{ github.repository }}" --clobber
-          gh release upload "$VERSION" out/SHA1SUMS --repo "${{ github.repository }}" --clobber
+          gh release upload "$VERSION" out/SHA1SUMS out/SHA256SUMS --repo "${{ github.repository }}" --clobber
 
   # https://github.com/liskin/gh-workflow-keepalive
   keepalive:
