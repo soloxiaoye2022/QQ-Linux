@@ -11,6 +11,14 @@
 - 最新版本：前往 [Releases 最新頁](https://github.com/soloxiaoye2022/QQ-Linux/releases/latest)
 - 歷史版本：前往 [全部 Releases](https://github.com/soloxiaoye2022/QQ-Linux/releases)
 
+## 其它平台
+
+| 平台 | 倉庫 |
+| --- | --- |
+| Windows | [QQ-Windows](https://github.com/soloxiaoye2022/QQ-Windows) |
+| macOS | [QQ-macOS](https://github.com/soloxiaoye2022/QQ-macOS) |
+| Android | [QQ-Android](https://github.com/soloxiaoye2022/QQ-Android) |
+
 ## 支援架構
 
 | 架構 | 套件格式 | 說明 |

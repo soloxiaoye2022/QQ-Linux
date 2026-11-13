@@ -11,6 +11,14 @@ All `.deb`, `.rpm` and `.AppImage` files come from Tencent's official download s
 - Latest version: see the [latest release](https://github.com/soloxiaoye2022/QQ-Linux/releases/latest)
 - Historical versions: see [all releases](https://github.com/soloxiaoye2022/QQ-Linux/releases)
 
+## Other platforms
+
+| Platform | Repository |
+| --- | --- |
+| Windows | [QQ-Windows](https://github.com/soloxiaoye2022/QQ-Windows) |
+| macOS | [QQ-macOS](https://github.com/soloxiaoye2022/QQ-macOS) |
+| Android | [QQ-Android](https://github.com/soloxiaoye2022/QQ-Android) |
+
 ## Supported architectures
 
 | Architecture | Package formats | Notes |
